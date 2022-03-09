@@ -27,6 +27,8 @@ class Cache:
             "num_writebacks": 0,
             "memory_traffic": 0
         }
+        self.is_write_back = False
+        self.write_back_inst = ""
         self.build_cache()
 
     def build_cache(self):
@@ -64,11 +66,12 @@ class Cache:
                 return 0
             elif block.tag == "":
                 block.tag = tag
+                block.instruction = instruction
                 block.time = self.timestamp
                 return 1
             else:
                 pass
-        self.evict(index, tag, 'r')
+        self.evict(index, tag, 'r', instruction)
         return 2
 
     def write(self, instruction):
@@ -85,15 +88,16 @@ class Cache:
                 return 0
             elif block.tag == "":
                 block.tag = tag
+                block.instruction = instruction
                 block.isDirty = True
                 block.time = self.timestamp
                 return 1
             else:
                 pass
-        self.evict(index, tag, 'w')  # the isDirty flag of evicted block should be set to false
+        self.evict(index, tag, 'w', instruction)  # the isDirty flag of evicted block should be set to false
         return 2
 
-    def evict(self, index, tag, mode):
+    def evict(self, index, tag, mode, instruction):
         """
         Evicts a block from the cache.
         In case of a miss and replace, this method will determine the block to be evicted
@@ -103,22 +107,26 @@ class Cache:
         """
         block_set = self.block_container[index]
         if self.replacement_policy == 0:
-            self.evictLRU(block_set, tag, self.timestamp, mode)
+            self.evictLRU(block_set, tag, self.timestamp, mode, instruction)
         elif self.replacement_policy == 1:
             self.evictPLRU(block_set, tag, self.timestamp, mode)
         else:
-            self.evictOPT(block_set, tag, self.timestamp, mode, index)
+            self.evictOPT(block_set, tag, self.timestamp, mode, index, instruction)
 
     def execute(self, instruction):
         """
         Executes a read/write as specified in the instruction
-        and performs a counter update.
-        :return: updates the value to the 'timestamp'
+        and performs a counter update. Updates the value to the 'timestamp'
+        :return: Status of the read/write operation
+        0 - hit, 1 miss, 2 miss-replace
         """
         if self.timestamp < 0:
             self.timestamp = 0
         else:
             self.timestamp += 1
+
+        self.is_write_back = False
+        self.write_back_inst = ""
 
         index, tag = self.get_instruction_components(instruction[1])
 
@@ -142,6 +150,11 @@ class Cache:
                 self.measurements['writes_miss'] += 1
         if self.replacement_policy == 2:
             self.future_table[index].pop(0)
+        return status
+
+    def issue_writeback(self, instruction):
+        self.is_write_back = True
+        self.write_back_inst = instruction
 
     def get_dimensions(self):
         """
@@ -187,29 +200,25 @@ class Cache:
                 self.measurements['memory_traffic'] += higher_level_direct_writebacks
 
     def display_cache_content(self):
-        print("============= START OF CACHE ===============")
         for i in range(self.num_of_sets):
-            print("Set", i, " :", end=" ")
+            print("Set", i, ":", end=" ")
             for j in range(self.associativity):
                 dirty = "D" if self.block_container[i][j].isDirty else ""
                 print(self.block_container[i][j].tag[2:], dirty,
                       # self.block_container[i][j].time,
                       end=" ")
             print("")
-            for j in range(self.associativity):
-                print("____________", end="_")
-            print("")
-        print("============= END OF CACHE ================")
 
     # ================================== Eviction Policies ==================================
-    def evictLRU(self, block_set, tag, time, mode):
+    def evictLRU(self, block_set, tag, time, mode, instruction):
         min_index = block_set.index(min(block_set, key=lambda x: x.time))
         block_set[min_index].tag = tag
         block_set[min_index].time = time
 
         if block_set[min_index].isDirty:
             self.measurements['num_writebacks'] += 1  # if block is dirty, write-back will be issued
-
+            self.issue_writeback(block_set[min_index].instruction)
+        block_set[min_index].instruction = instruction
         if mode == 'r':
             block_set[min_index].isDirty = False
         else:
@@ -218,7 +227,7 @@ class Cache:
     def evictPLRU(self, block_set, tag, time, mode):
         pass
 
-    def evictOPT(self, block_set, tag, time, mode, index):
+    def evictOPT(self, block_set, tag, time, mode, index, instruction):
         if len(self.future_table[index]) > 0:
             timestamp_dict = {}
             for i in block_set:
@@ -237,6 +246,8 @@ class Cache:
 
                     if block.isDirty:
                         self.measurements['num_writebacks'] += 1  # if block is dirty, write-back will be issued
+                        self.issue_writeback(block.instruction)
+                    block.instruction = instruction
 
                     if mode == 'r':
                         block.isDirty = False
@@ -249,6 +260,9 @@ class Cache:
 
             if block_set[0].isDirty:
                 self.measurements['num_writebacks'] += 1  # if block is dirty, write-back will be issued
+                self.issue_writeback(block_set[0].instruction)
+
+            block_set[0].instruction = instruction
 
             if mode == 'r':
                 block_set[0].isDirty = False
@@ -290,7 +304,7 @@ class Cache:
             if node.right:
                 stack.append(node.right)
 
-    def updateTree(self, root, tag, r_w, mode="r"):
+    def updateTree(self, root, tag, r_w, instruction, mode="r"):
         """
         mode = a => access
                r => replace
@@ -309,6 +323,10 @@ class Cache:
             node.block.tag = tag
             if node.block.isDirty:
                 self.measurements['num_writebacks'] += 1
+                self.issue_writeback(node.block.instruction)
+
+            node.block.instruction = instruction
+
             if r_w == 'w':
                 node.block.isDirty = True
             else:
@@ -371,7 +389,7 @@ class PLRUCache(Cache):
         leaf_set = self.get_leaf_nodes(root, [])
 
         if len(leaf_set) < self.associativity:
-            self.updateTree(root, tag, 'r')
+            self.updateTree(root, tag, 'r', instruction)
             return 1
         elif tag in [x.block.tag for x in leaf_set]:
             path_to_leaf = []
@@ -382,7 +400,7 @@ class PLRUCache(Cache):
             self.update_hit_tree(root, path_to_leaf, 'r')
             return 0
         else:
-            self.updateTree(root, tag, 'r')
+            self.updateTree(root, tag, 'r', instruction)
             return 2
 
     def write(self, instruction):
@@ -392,7 +410,7 @@ class PLRUCache(Cache):
         leaf_set = self.get_leaf_nodes(root, [])
 
         if len(leaf_set) < self.associativity:
-            self.updateTree(root, tag, 'w')
+            self.updateTree(root, tag, 'w', instruction)
             return 1
         elif tag in [x.block.tag for x in leaf_set]:
             path_to_leaf = []
@@ -403,13 +421,12 @@ class PLRUCache(Cache):
             self.update_hit_tree(root, path_to_leaf, 'w')
             return 0
         else:
-            self.updateTree(root, tag, 'w')
+            self.updateTree(root, tag, 'w', instruction)
             return 2
 
     def display_cache_content(self):
-        print("============= START OF CACHE ===============")
         for i in range(self.num_of_sets):
-            print("Set", i, " :", end=" ")
+            print("Set", i, ":", end=" ")
             leaf_set = self.get_leaf_nodes(self.block_container[i][0], [])
             for j in range(len(leaf_set)):
                 dirty = "D" if leaf_set[j].block.isDirty else ""
@@ -417,7 +434,3 @@ class PLRUCache(Cache):
                       # self.block_container[i][j].time,
                       end=" ")
             print("")
-            for j in range(self.associativity):
-                print("____________", end="_")
-            print("")
-        print("============= END OF CACHE ================")

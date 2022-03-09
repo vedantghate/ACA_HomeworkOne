@@ -32,9 +32,9 @@ random.shuffle(blkst)
 for i in range(5):
     print(blkst[i].time, blkst[i].tag)
 
-
-evictLRU(blkst, "555555", 5, 'r')
-evictLRU(blkst, "666666", 6, 'r')
+bit = 1
+if bit:
+    print("-1 is not taken as false")
 
 
 

@@ -42,7 +42,7 @@ class Cache:
             i_set = []
             if self.replacement_policy == 1:
                 # create Trees here
-                height = math.log(self.associativity, 2) - 1 # TODO check +- 1
+                height = int(math.log(self.associativity, 2))
                 i_set.append(self.createTree(height))
             else:
                 for j in range(self.associativity):
@@ -123,7 +123,7 @@ class Cache:
         index, tag = self.get_instruction_components(instruction[1])
 
         if instruction[0] == 'r':
-            status = self.plru(tag, index) if self.replacement_policy == 1 else self.read(instruction[1])
+            status = self.read(instruction[1])
             self.measurements['reads'] += 1
             if status == 0:
                 pass
@@ -132,7 +132,7 @@ class Cache:
             else:
                 self.measurements['reads_miss'] += 1
         else:
-            status = self.plru(tag, index) if self.replacement_policy == 1 else self.write(instruction[1])
+            status = self.write(instruction[1])
             self.measurements['writes'] += 1
             if status == 0:
                 pass
@@ -140,7 +140,6 @@ class Cache:
                 self.measurements['writes_miss'] += 1
             else:
                 self.measurements['writes_miss'] += 1
-
         if self.replacement_policy == 2:
             self.future_table[index].pop(0)
 
@@ -174,11 +173,11 @@ class Cache:
     def getMissRate(self, cache_level):
         if cache_level == 1:
             self.measurements['miss_rate'] = (self.measurements['reads_miss'] + self.measurements['writes_miss']) \
-                                                 / (self.measurements['reads'] + self.measurements['writes'])
+                                             / (self.measurements['reads'] + self.measurements['writes'])
 
     def getMemoryTraffic(self, cache_level, higher_level_direct_writebacks):
         if cache_level == 1:
-            self.measurements['memory_traffic'] = self.measurements['num_writebacks'] + self.measurements['reads_miss']\
+            self.measurements['memory_traffic'] = self.measurements['num_writebacks'] + self.measurements['reads_miss'] \
                                                   + self.measurements['writes_miss']
         else:
             self.measurements['memory_traffic'] = self.measurements['num_writebacks'] + self.measurements['reads_miss'] \
@@ -187,16 +186,15 @@ class Cache:
                 # add direct writebacks to memory of higher level cache in case of inclusion
                 self.measurements['memory_traffic'] += higher_level_direct_writebacks
 
-
     def display_cache_content(self):
         print("============= START OF CACHE ===============")
         for i in range(self.num_of_sets):
-            print("Set:", i, " ")
+            print("Set", i, " :", end=" ")
             for j in range(self.associativity):
                 dirty = "D" if self.block_container[i][j].isDirty else ""
-                print(self.block_container[i][j].tag, dirty,
+                print(self.block_container[i][j].tag[2:], dirty,
                       # self.block_container[i][j].time,
-                      end=" | ")
+                      end=" ")
             print("")
             for j in range(self.associativity):
                 print("____________", end="_")
@@ -257,18 +255,24 @@ class Cache:
             else:
                 block_set[0].isDirty = True
 
+    # ================================= PLRU ==============================
     def createTree(self, height):
-        root = Node.Node()
+        root = Node.Node(0)
         stack = [root]
+        node_id_counter = 1
         for i in range(height):
             for j in range(2 ** i):
                 tempNode = stack.pop(0)
-                leftNode = Node.Node()
-                rightNode = Node.Node()
+
+                leftNode = Node.Node(node_id_counter, parent=tempNode)
+                node_id_counter += 1
+
+                rightNode = Node.Node(node_id_counter, parent=tempNode)
+                node_id_counter += 1
+
                 tempNode.left = leftNode
                 tempNode.right = rightNode
                 stack.extend([leftNode, rightNode])
-
         self.populateTree(root)
         return root
 
@@ -286,57 +290,75 @@ class Cache:
             if node.right:
                 stack.append(node.right)
 
-    def updateTree(self, root, mode="a"):
+    def updateTree(self, root, tag, r_w, mode="r"):
         """
         mode = a => access
                r => replace
+        :return: The leaf node
         """
         node = root
-        while(node.block is None):
+        while node.block is None:
             if node.bit == 0:
                 nextNode = node.left if mode == "a" else node.right
             else:
                 nextNode = node.right if mode == "a" else node.left
             node.bit = 0 if node.bit else 1
             node = nextNode
+
+        if mode == 'r':
+            node.block.tag = tag
+            if node.block.isDirty:
+                self.measurements['num_writebacks'] += 1
+            if r_w == 'w':
+                node.block.isDirty = True
+            else:
+                node.block.isDirty = False
         return node
 
-
-    def plru(self, tag, index):
-        root = self.plru_trees[index] if index in self.plru_trees.keys() else Node.Node()
-        temp = root # copy.deepcopy(root)
-        height = int(math.log(self.associativity, 2)) - 1
-        print("===> height: ", height)
-        for i in range(height):
-            if temp.left is None:
-                temp.left = Node.Node()
-                temp.bit = 0
-                temp = temp.left
-            elif temp.right is None:
-                temp.right = Node.Node()
-                temp.bit = 1
-                temp = temp.right
-
-        if temp.left is None:
-            temp.left = Node.Leaf(tag)
-            temp.bit = 0
-        elif temp.right is None:
-            temp.right = Node.Leaf(tag)
-            temp.bit = 1
-        self.plru_trees[index] = root
-        print("========== Tree ===============")
-        self.print_tree(root)
-        print("===============================")
+    def update_hit_tree(self, root, path_to_leaf, mode):
+        tempNode = root
+        for i in range(len(path_to_leaf) - 1):
+            if tempNode.block is None:
+                if tempNode.left.node_id == path_to_leaf[i+1]:
+                    tempNode.bit = 0
+                    tempNode = tempNode.left
+                else:
+                    tempNode.bit = 1
+                    tempNode = tempNode.right
+        if mode == 'w':
+            tempNode.block.isDirty = True
 
     def print_tree(self, root):
-        if isinstance(root, Node.Node):
-            if root.left:
-                self.print_tree(root.left)
-            print(root.bit)
-            if root.right:
-                self.print_tree(root.right)
-        else:
-            print(root.tag)
+        if root.block is None:
+            print("Node ID: ", root.node_id, "Bit: ", root.bit)
+        if root.left:
+            self.print_tree(root.left)
+        if root.right:
+            self.print_tree(root.right)
+        if root.block is not None:
+            print("Node ID: ", root.node_id, "Tag: => ", root.block.tag)
+
+    def get_leaf_nodes(self, root, leaf_set):
+        if root.block is None:
+            pass
+        if root.left:
+            self.get_leaf_nodes(root.left, leaf_set)
+        if root.right:
+            self.get_leaf_nodes(root.right, leaf_set)
+        if root.block is not None:
+            if root.block.tag != "":
+                leaf_set.append(root)
+        return leaf_set
+
+    def get_path(self, leaf):
+        path = [leaf.node_id]
+        tempNode = leaf
+        while tempNode.parent is not None:
+            path.append(tempNode.parent.node_id)
+            tempNode = tempNode.parent
+        path.reverse()
+        return path
+
 
 class PLRUCache(Cache):
     def __init__(self, *args, **kwargs):
@@ -344,5 +366,58 @@ class PLRUCache(Cache):
 
     def read(self, instruction):
         index, tag = self.get_instruction_components(instruction)
-        self.updateTree(self.block_container[index], mode="a")
 
+        root = self.block_container[index][0]
+        leaf_set = self.get_leaf_nodes(root, [])
+
+        if len(leaf_set) < self.associativity:
+            self.updateTree(root, tag, 'r')
+            return 1
+        elif tag in [x.block.tag for x in leaf_set]:
+            path_to_leaf = []
+            for leaf in leaf_set:
+                if leaf.block.tag == tag:
+                    path_to_leaf = self.get_path(leaf)
+                    break
+            self.update_hit_tree(root, path_to_leaf, 'r')
+            return 0
+        else:
+            self.updateTree(root, tag, 'r')
+            return 2
+
+    def write(self, instruction):
+        index, tag = self.get_instruction_components(instruction)
+
+        root = self.block_container[index][0]
+        leaf_set = self.get_leaf_nodes(root, [])
+
+        if len(leaf_set) < self.associativity:
+            self.updateTree(root, tag, 'w')
+            return 1
+        elif tag in [x.block.tag for x in leaf_set]:
+            path_to_leaf = []
+            for leaf in leaf_set:
+                if leaf.block.tag == tag:
+                    path_to_leaf = self.get_path(leaf)
+                    break
+            self.update_hit_tree(root, path_to_leaf, 'w')
+            return 0
+        else:
+            self.updateTree(root, tag, 'w')
+            return 2
+
+    def display_cache_content(self):
+        print("============= START OF CACHE ===============")
+        for i in range(self.num_of_sets):
+            print("Set", i, " :", end=" ")
+            leaf_set = self.get_leaf_nodes(self.block_container[i][0], [])
+            for j in range(len(leaf_set)):
+                dirty = "D" if leaf_set[j].block.isDirty else ""
+                print(leaf_set[j].block.tag[2:], dirty,
+                      # self.block_container[i][j].time,
+                      end=" ")
+            print("")
+            for j in range(self.associativity):
+                print("____________", end="_")
+            print("")
+        print("============= END OF CACHE ================")

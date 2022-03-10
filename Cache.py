@@ -201,7 +201,10 @@ class Cache:
         """
         binary_instruction = str(bin(int(instruction, base=16)))[2:].zfill(32)
 
-        index = int(binary_instruction[self.number_of_tag_bits:32 - self.number_of_offset_bits], 2)
+        if self.num_of_sets == 1:
+            index = 0
+        else:
+            index = int(binary_instruction[self.number_of_tag_bits:32 - self.number_of_offset_bits], 2)
         tag = "0x" + '{:0{}x}'.format(int(binary_instruction[:self.number_of_tag_bits], 2),
                                       int(self.number_of_tag_bits / 4))
         return index, tag

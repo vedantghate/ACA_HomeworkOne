@@ -152,6 +152,16 @@ def run_OPT():
     printResults(l1_cache, l2_cache)
 
 
+def get_aat_and_area(htl1, htl2, al1, al2, l1, l2):
+    aat = 0.0
+    if l2size == 0:
+        aat = htl1 + l1.measurements['miss_rate'] * 100
+    else:
+        aat = htl1 + l1.measurements['miss_rate']*(htl2 + l2.measurements['miss_rate']*100)
+    area = al1 + al2
+    return aat, area
+
+
 # =========== Runner block ============
 
 instruction_queue = []

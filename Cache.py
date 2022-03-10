@@ -4,7 +4,7 @@ import Node
 
 
 class Cache:
-    def __init__(self, size, associativity, block_size, inclusion_property, replacement_policy):
+    def __init__(self, size, associativity, block_size, inclusion_property, replacement_policy, is_highest):
         self.associativity = associativity
         self.size = size
         self.block_size = block_size
@@ -23,13 +23,18 @@ class Cache:
             "reads_miss": 0,
             "writes": 0,
             "writes_miss": 0,
-            "miss_rate": 0,
+            "miss_rate": 0.0,
             "num_writebacks": 0,
-            "memory_traffic": 0
+            "memory_traffic": 0,
+            "direct_writeback": 0
         }
         self.is_write_back = False
         self.write_back_inst = ""
-        self.build_cache()
+        self.is_issue_invalidate = False
+        self.invalidate_inst = ""
+        self.is_highest_level = is_highest
+        if self.size:
+            self.build_cache()
 
     def build_cache(self):
         """
@@ -68,6 +73,7 @@ class Cache:
                 block.tag = tag
                 block.instruction = instruction
                 block.time = self.timestamp
+                block.isValid = True
                 return 1
             else:
                 pass
@@ -156,6 +162,23 @@ class Cache:
         self.is_write_back = True
         self.write_back_inst = instruction
 
+    def issue_invalidate(self, instruction):
+        self.is_issue_invalidate = True
+        self.invalidate_inst = instruction
+
+    def clear_validation_flags(self):
+        self.is_issue_invalidate = False
+        self.invalidate_inst = ""
+
+    def invalidate_block(self, instruction):
+        index, tag = self.get_instruction_components(instruction)
+        for block in self.block_container[index]:
+            if block.tag == tag:
+                block.isValid = False
+                if block.isDirty:
+                    self.measurements['direct_writeback'] += 1
+                break
+
     def get_dimensions(self):
         """
         Calculates the dimensions of the cache container, and the #index bits, offset bits and tag bits
@@ -187,6 +210,9 @@ class Cache:
         if cache_level == 1:
             self.measurements['miss_rate'] = (self.measurements['reads_miss'] + self.measurements['writes_miss']) \
                                              / (self.measurements['reads'] + self.measurements['writes'])
+        else:
+            self.measurements['miss_rate'] = self.measurements['reads_miss']/self.measurements['reads'] if self.size \
+                else 0
 
     def getMemoryTraffic(self, cache_level, higher_level_direct_writebacks):
         if cache_level == 1:
@@ -214,6 +240,9 @@ class Cache:
         min_index = block_set.index(min(block_set, key=lambda x: x.time))
         block_set[min_index].tag = tag
         block_set[min_index].time = time
+
+        if not self.is_highest_level and self.inclusion_property == 1:
+            self.issue_invalidate(block_set[min_index].instruction)
 
         if block_set[min_index].isDirty:
             self.measurements['num_writebacks'] += 1  # if block is dirty, write-back will be issued
@@ -244,6 +273,9 @@ class Cache:
                     block.tag = tag
                     block.time = time
 
+                    if not self.is_highest_level and self.inclusion_property == 1:
+                        self.issue_invalidate(block.instruction)
+
                     if block.isDirty:
                         self.measurements['num_writebacks'] += 1  # if block is dirty, write-back will be issued
                         self.issue_writeback(block.instruction)
@@ -257,6 +289,9 @@ class Cache:
         else:
             block_set[0].tag = tag
             block_set[0].time = time
+
+            if not self.is_highest_level and self.inclusion_property == 1:
+                self.issue_invalidate(block_set[0].instruction)
 
             if block_set[0].isDirty:
                 self.measurements['num_writebacks'] += 1  # if block is dirty, write-back will be issued

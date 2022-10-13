@@ -135,7 +135,6 @@ class Cache:
         self.write_back_inst = ""
 
         index, tag = self.get_instruction_components(instruction[1])
-
         if instruction[0] == 'r':
             status = self.read(instruction[1])
             self.measurements['reads'] += 1
@@ -205,17 +204,22 @@ class Cache:
             index = 0
         else:
             index = int(binary_instruction[self.number_of_tag_bits:32 - self.number_of_offset_bits], 2)
-        tag = "0x" + '{:0{}x}'.format(int(binary_instruction[:self.number_of_tag_bits], 2),
-                                      int(self.number_of_tag_bits / 4))
+        #tag = "0x" + '{:0{}x}'.format(int(binary_instruction[:self.number_of_tag_bits], 2),
+        #                              int(self.number_of_tag_bits / 4))
+        tag = hex(int(binary_instruction[:self.number_of_tag_bits], 2))
         return index, tag
 
     def getMissRate(self, cache_level):
         if cache_level == 1:
             self.measurements['miss_rate'] = (self.measurements['reads_miss'] + self.measurements['writes_miss']) \
                                              / (self.measurements['reads'] + self.measurements['writes'])
+            self.measurements['miss_rate'] = '{:.6f}'.format(self.measurements['miss_rate'])
         else:
-            self.measurements['miss_rate'] = self.measurements['reads_miss']/self.measurements['reads'] if self.size \
-                else 0
+            if self.size:
+                self.measurements['miss_rate'] = self.measurements['reads_miss']/self.measurements['reads']
+                self.measurements['miss_rate'] = '{:.6f}'.format(self.measurements['miss_rate'])
+            else:
+                self.measurements['miss_rate'] = 0
 
     def getMemoryTraffic(self, cache_level, higher_level_direct_writebacks):
         if cache_level == 1:

@@ -25,7 +25,8 @@ def configurator():
 
 
 def read_tracefile(path):
-    f = open(path, "r")
+    f = open(path, "r", encoding='utf-8')
+    i = 0
     for x in f:
         inst = x.rstrip().split(' ')
         if len(inst) == 2:
@@ -54,7 +55,7 @@ def printResults(l1_obj, l2_obj):
     print("L2_ASSOC: ", l2assoc)
     print("REPLACEMENT POLICY: ", rp_codes[rep_pol])
     print("INCLUSION PROPERTY: ", ip_codes[inc_pol])
-    print("trace_file: ", file)
+    print("trace_file: ", file.split('/')[-1])
     print("===== L1 contents =====")
     l1_obj.display_cache_content()
     if l2size:
